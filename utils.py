@@ -1,53 +1,29 @@
 """
 Black-Scholes analytical formulas, Greeks, and utility functions
 """
+import math
 import numpy as np
 import torch
 from scipy.stats import norm
 
 
 def black_scholes_price(S, K, T, sigma, r, option_type='call'):
-    """
-    Black-Scholes analytical price for European options.
-    
-    Parameters
-    ----------
-    S : float or np.ndarray - Asset price
-    K : float or np.ndarray - Strike price
-    T : float or np.ndarray - Time to maturity (years)
-    sigma : float or np.ndarray - Volatility
-    r : float or np.ndarray - Risk-free rate
-    option_type : str - 'call' or 'put'
-    
-    Returns
-    -------
-    price : float or np.ndarray
-    """
-    # Handle T=0 case (at expiry)
-    if np.isscalar(T):
-        if T <= 0:
-            if option_type == 'call':
-                return np.maximum(S - K, 0.0)
-            else:
-                return np.maximum(K - S, 0.0)
-    else:
-        # Array case: handle element-wise
-        price = np.where(
-            T <= 0,
-            np.maximum(S - K, 0.0) if option_type == 'call' else np.maximum(K - S, 0.0),
-            _bs_price(S, K, T, sigma, r, option_type)
-        )
-        return price
-    
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    d2 = d1 - sigma * np.sqrt(T)
-    
-    if option_type == 'call':
-        price = S * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
-    else:
-        price = K * np.exp(-r * T) * norm.cdf(-d2) - S * norm.cdf(-d1)
-    
-    return price
+    """Black-Scholes analytical price for European options. T in years; S/K/T/sigma/r may be scalars or broadcastable arrays."""
+    if option_type not in ('call', 'put'):
+        raise ValueError("option_type must be 'call' or 'put'")
+    S, K, T, sigma, r = np.broadcast_arrays(*[
+        np.asarray(value, dtype=float) for value in (S, K, T, sigma, r)
+    ])
+    if not all(np.isfinite(value).all() for value in (S, K, T, sigma, r)):
+        raise ValueError('Pricing inputs must be finite')
+    if np.any(S < 0) or np.any(K <= 0) or np.any(T < 0) or np.any(sigma < 0):
+        raise ValueError('Require S >= 0, K > 0, T >= 0 and sigma >= 0')
+    discount_strike = K * np.exp(-r * T)
+    deterministic = np.maximum(S - discount_strike, 0.0) if option_type == 'call' else np.maximum(discount_strike - S, 0.0)
+    regular = (T > 0) & (sigma > 0) & (S > 0)
+    price = np.array(deterministic, copy=True)
+    price[regular] = _bs_price(S[regular], K[regular], T[regular], sigma[regular], r[regular], option_type)
+    return price.item() if price.ndim == 0 else price
 
 
 def _bs_price(S, K, T, sigma, r, option_type):
@@ -122,47 +98,22 @@ def black_scholes_greeks(S, K, T, sigma, r, option_type='call'):
 
 
 def monte_carlo_price(S, K, T, sigma, r, n_paths=100000, seed=42, option_type='call'):
-    """
-    Monte Carlo simulation for European option pricing.
-    
-    Parameters
-    ----------
-    S : float - Current asset price
-    K : float - Strike price
-    T : float - Time to maturity
-    sigma : float - Volatility
-    r : float - Risk-free rate
-    n_paths : int - Number of Monte Carlo paths
-    seed : int - Random seed
-    option_type : str - 'call' or 'put'
-    
-    Returns
-    -------
-    price : float - MC estimated price
-    std_err : float - Standard error of estimate
-    """
+    """Monte Carlo price for a European option. Returns (price, std_err)."""
     rng = np.random.default_rng(seed)
-    
-    # Simulate terminal prices using geometric Brownian motion
     Z = rng.standard_normal(n_paths)
     S_T = S * np.exp((r - 0.5 * sigma**2) * T + sigma * np.sqrt(T) * Z)
     
-    # Compute payoffs
     if option_type == 'call':
         payoffs = np.maximum(S_T - K, 0.0)
     else:
         payoffs = np.maximum(K - S_T, 0.0)
     
-    # Discount and average
     discount = np.exp(-r * T)
     prices = discount * payoffs
     
     return np.mean(prices), np.std(prices) / np.sqrt(n_paths)
 
 
-# =============================================================================
-# PyTorch versions for GPU computation
-# =============================================================================
 
 def _normal_cdf(x):
     """Standard normal CDF using erf (torch.normal_cdf does not exist)."""
@@ -173,6 +124,8 @@ def black_scholes_price_torch(S, K, T, sigma, r, option_type='call'):
     """
     PyTorch version of Black-Scholes pricing (supports batching on GPU).
     """
+    if option_type not in ('call', 'put'):
+        raise ValueError("option_type must be 'call' or 'put'")
     eps = 1e-10
     sqrt_T = torch.sqrt(T.clamp(min=eps))
 
@@ -203,7 +156,9 @@ def compute_rmse(pred, true):
 def compute_mape(pred, true, eps=1e-8):
     """Mean Absolute Percentage Error"""
     mask = true.abs() > eps
-    return torch.mean(torch.abs((pred[mask] - true[mask]) / (true[mask] + eps))) * 100
+    if not torch.any(mask):
+        return pred.new_tensor(float('nan'))  # No nonzero targets: MAPE is undefined.
+    return torch.mean(torch.abs((pred[mask] - true[mask]) / true[mask])) * 100
 
 
 def compute_max_error(pred, true):
@@ -211,22 +166,12 @@ def compute_max_error(pred, true):
     return torch.max(torch.abs(pred - true))
 
 
-# =============================================================================
-# Cloud Storage Helpers
-# =============================================================================
 
 def upload_to_gcp_bucket(local_file_path, bucket_name, destination_blob_name, service_account_json_path, atomic=True, storage_class='STANDARD'):
     """
-    Uploads a file to a Google Cloud Storage bucket using a service account.
-
-    Parameters
-    ----------
-    local_file_path : str — path to local file
-    bucket_name : str — GCS bucket name
-    destination_blob_name : str — destination path in GCS
-    service_account_json_path : str — path to service account key
-    atomic : bool — if True, upload to temp name then rename (prevents partial uploads)
-    storage_class : str — 'STANDARD', 'NEARLINE', 'COLDLINE', 'ARCHIVE'
+    Upload a file to GCS using a service account.
+    atomic=True uploads to a temp blob first to prevent partial overwrites.
+    storage_class: 'STANDARD', 'NEARLINE', 'COLDLINE', or 'ARCHIVE'.
     """
     try:
         from google.cloud import storage
@@ -241,7 +186,6 @@ def upload_to_gcp_bucket(local_file_path, bucket_name, destination_blob_name, se
         client = storage.Client(credentials=credentials, project=credentials.project_id)
         bucket = client.bucket(bucket_name)
 
-        # Atomic upload: upload to temp name first, then rename
         if atomic:
             temp_blob_name = destination_blob_name + '.tmp'
             temp_blob = bucket.blob(temp_blob_name)
