@@ -11,6 +11,7 @@ import os
 import time
 import argparse
 import numpy as np
+import scipy.special
 from tqdm import tqdm
 import h5py
 from typing import Tuple, Dict, Optional
@@ -94,7 +95,9 @@ def importance_sample_T(n_samples: int,
     rng = np.random.default_rng(seed)
     u = rng.random(n_samples).astype(np.float32)
     # Power transform: cluster near u=0 → T=T_min
-    u_transformed = u ** (1.0 / concentration)
+    if not np.isfinite(concentration) or concentration <= 0:
+        raise ValueError("concentration must be finite and positive")
+    u_transformed = u ** concentration
     T = T_min + u_transformed * (T_max - T_min)
     return T
 
@@ -254,7 +257,7 @@ def create_s_grid(S_min: float, K_max: float, n_S: int) -> np.ndarray:
 
 
 def create_t_template(n_t: int, power: float = 2.0) -> np.ndarray:
-    """Non-uniform time template in [0, 1], clustered near maturity."""
+    """Non-uniform calendar-time template in [0, 1], clustered near inception."""
     u = np.linspace(0, 1, n_t, dtype=np.float32)
     return u ** power
 
@@ -499,5 +502,24 @@ def generate_data(config: Optional[Config] = None):
     print(f"{'='*60}")
 
 
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--n_samples', type=int, default=Config.n_samples)
+    parser.add_argument('--batch_size', type=int, default=Config.batch_size_data)
+    parser.add_argument('--output', default=Config.data_dir)
+    parser.add_argument('--seed', type=int, default=Config.seed)
+    args = parser.parse_args(argv)
+    if args.n_samples < 10:
+        parser.error('--n_samples must be at least 10 for nonempty 80/10/10 splits')
+    if args.batch_size < 1:
+        parser.error('--batch_size must be positive')
+    config = Config()
+    config.n_samples = args.n_samples
+    config.batch_size_data = args.batch_size
+    config.data_dir = args.output
+    config.seed = args.seed
+    generate_data(config)
+
+
 if __name__ == '__main__':
-    generate_data()
+    main()
