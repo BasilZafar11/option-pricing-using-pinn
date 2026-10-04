@@ -24,3 +24,13 @@ env/
 .vscode/
 .idea/
 .ipynb_checkpoints/
+
+# Local verification and test caches
+.handoff/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local publishing notes
+/PUBLISHING_GUIDE.md
+/commit-plan.csv
