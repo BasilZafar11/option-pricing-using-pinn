@@ -1,8 +1,8 @@
 """
-Evaluation & Visualization Script — Preprint Edition
+Evaluation and visualization script.
 
 Produces all figures and metrics needed for the preprint:
-  1. Relative L2 error on full test set (target < 1%)
+  1. Relative L2 error on full test set
   2. Relative L2 error by sigma range (low / mid / high)
   3. Predicted vs ground-truth surface plots (2-3 samples)
   4. Error surface (difference map)
@@ -568,7 +568,7 @@ def run_full_evaluation(config, data_dir=None, model_path=None):
     if data_dir is None:
         data_dir = getattr(config, 'data_dir', './data')
     if model_path is None:
-        model_path = os.path.join(getattr(config, 'checkpoint_dir', './checkpoints'), 'best.pt')
+        model_path = os.path.join(getattr(config, 'checkpoint_dir', './checkpoints'), f'{config.run_name}_best.pt')
 
     output_dir = getattr(config, 'results_dir', './results')
     os.makedirs(output_dir, exist_ok=True)
@@ -618,8 +618,8 @@ def run_full_evaluation(config, data_dir=None, model_path=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Evaluate FNO option pricer')
     parser.add_argument('--data_dir', type=str, default='./data')
-    parser.add_argument('--model_path', type=str, default='./checkpoints/best.pt')
-    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--model_path', type=str, default=None)
+    parser.add_argument('--device', type=str, default=Config.device)
     parser.add_argument('--output_dir', type=str, default='./results')
     parser.add_argument('--run_ablation', action='store_true',
                         help='Train both PDE and data-only models for ablation study')
@@ -627,24 +627,12 @@ if __name__ == '__main__':
     parser.add_argument('--ablation_patience', type=int, default=15)
     args = parser.parse_args()
 
-    class EvalConfig:
-        device = args.device
-        fno_modes = 12
-        fno_layers = 3
-        fno_width = 64
-        S_grid_size = 256
-        t_grid_size = 64
-        S_min = 1e-3
-        S_max = 600.0
-        T_max = 2.0
-        t_sampling_power = 2.0
-        checkpoint_dir = './checkpoints'
-        results_dir = args.output_dir
-        data_dir = args.data_dir
-        ablation_epochs = args.ablation_epochs
-        ablation_patience = args.ablation_patience
-
-    config = EvalConfig()
+    config = Config()
+    config.device = args.device
+    config.results_dir = args.output_dir
+    config.data_dir = args.data_dir
+    config.ablation_epochs = args.ablation_epochs
+    config.ablation_patience = args.ablation_patience
 
     if args.run_ablation:
         run_ablation(config, args.data_dir, args.output_dir)
