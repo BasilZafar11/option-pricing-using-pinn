@@ -1,82 +1,98 @@
-# Operator Learning for Fast Option Pricing
+# Option Surface Lab
 
-A neural operator framework that learns the Black–Scholes solution operator to enable real-time, high-fidelity option pricing across dynamic market conditions.
+**Physics-informed Fourier neural operators for European option-pricing research.**
 
-## Overview
+This project explores learning an entire Black–Scholes call-price surface from
+volatility, interest rate, strike and maturity. It combines synthetic analytical
+data, a Fourier neural operator (FNO), a coordinate-aware decoder and physics-based
+training losses. The repository name retains PINN terminology; the implemented
+network is an FNO with physics-informed training, rather than a conventional
+pointwise PINN.
 
-This project uses **Fourier Neural Operators (FNO)** to learn the mapping from market parameters (σ, r, K) to entire option pricing surfaces V(S, t), rather than predicting individual prices. This enables:
+This is a continuation of the collaborative project published by
+[Diclo-fenac](https://github.com/Diclo-fenac/option-pricing-using-pinn).
+See [provenance](ATTRIBUTION.md) and the preserved [MIT license](LICENSE).
 
-- **Real-time pricing**: O(1) inference after training
-- **Full surface generation**: Output V(S, t) for all S and t simultaneously  
-- **Greeks computation**: Automatic differentiation for Delta, Gamma, Vega
-- **Distribution shift robustness**: Generalize across volatility regimes
+## What is included
 
-## Architecture
+- Analytical call/put utilities and Monte Carlo reference pricing.
+- Synthetic call-price surfaces with Delta and clipped Gamma labels.
+- Fourier layers, coordinate decoding and an expiry-payoff constraint.
+- Training, checkpointing, optional cloud uploads and optional W&B logging.
+- Benchmark/evaluation scripts and three exploratory notebooks.
+- Numerical regression tests and a small dataset smoke check.
 
+**Research status:** the neural pipeline has a known time-coordinate inconsistency
+across generation, training and evaluation. Read [limitations](docs/LIMITATIONS.md)
+before using model results. This revision makes no measured accuracy or latency claim.
+
+## Start locally
+
+Python 3.11+ is recommended. From the repository folder:
+
+```sh
+python -m venv .venv
 ```
-(σ, r, K)  →  FNO (3 Fourier layers)  →  V(S_grid=256, t_grid=64)
+
+Activate with `.\.venv\Scripts\Activate.ps1` on PowerShell, or
+`source .venv/bin/activate` on macOS/Linux, then:
+
+```sh
+python -m pip install -r requirements-dev.txt
+python -m pytest -q
+python examples/analytical_price.py
+python scripts/smoke_check.py
 ```
 
-**Key design choices:**
-- 256×64 spatial-temporal grid
-- Non-uniform time sampling (clustered near expiry)
-- Physics-informed loss: L = L_data + λ_pde·L_PDE + λ_bc·L_BC
-- Spectral convolution with 12 Fourier modes
+The analytical example prints approximately 10.450584 for the call and 5.573526
+for the put at S = K = 100, T = 1, sigma = 0.2, r = 0.05. The smoke check generates
+20 small surfaces in a temporary directory and removes them afterwards.
+The full requirements include optional cloud/logging packages; CI installs only
+the dependencies needed for the local checks.
 
-## Quick Start
+## Run experiments
 
-### 1. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Generate Synthetic Data
-```bash
-python data_generator.py
-```
-Generates training/validation/test datasets as HDF5 files.
-
-### 3. Train the Model
-```bash
+```sh
+python data_generator_large.py --n_samples 100 --batch_size 10 --output ./data
 python train.py
-```
-Trains FNO with physics-informed loss. Checkpoints saved to `./checkpoints/`.
-
-### 4. Run Benchmarks
-```bash
-python benchmark.py
-```
-Compares FNO vs Black-Scholes vs Monte Carlo on accuracy, latency, and Greeks.
-
-## Project Structure
-
-```
-Implementation_B/
-├── config.py              # All hyperparameters
-├── data_generator.py      # Synthetic data generation
-├── fno_model.py           # Fourier Neural Operator
-├── train.py               # Training pipeline
-├── benchmark.py           # Benchmarking suite
-├── utils.py               # Black-Scholes formulas, Greeks, metrics
-├── requirements.txt
-└── README.md
+python benchmark.py --model_path ./checkpoints/fno_model_v1_best.pt
+python evaluate.py --model_path ./checkpoints/fno_model_v1_best.pt --device cpu
 ```
 
-## Mathematical Background
+Before training, edit `config.py` for the intended budget. The example dataset is
+small, but the default training remains 200 epochs. The default 100,000-sample
+generation uses about 19.7 GB just for its three surface arrays, before copies.
+No pretrained checkpoint is included.
 
-The Black–Scholes PDE:
+## Repository map
 
-∂V/∂t + ½σ²S²∂²V/∂S² + rS∂V/∂S - rV = 0
+| File | Purpose |
+| --- | --- |
+| `config.py` | Experiment, architecture and storage settings |
+| `data_generator_large.py` | Sampling, analytical surfaces and HDF5 splits |
+| `fno_model.py` | Fourier operator, decoder and physics/Greek helpers |
+| `train.py` | Optimization and checkpoints |
+| `utils.py` | Analytical pricing, metrics and optional storage helper |
+| `fdm_solver.py` | Finite-difference reference solver |
+| `benchmark.py`, `evaluate.py` | Comparisons and plots |
+| `notebooks/` | Original interactive workflows |
+| `tests/`, `scripts/` | Regression checks and smoke verification |
 
-With boundary condition V(S, T) = max(S - K, 0) for calls.
+## Mathematical target
 
-The FNO learns the solution operator:
+For a European call without dividends, the calendar-time PDE is
 
-**G: (σ, r, K) ↦ V(S, t)**
+```text
+dV/dt + 0.5 * sigma^2 * S^2 * d²V/dS² + r*S*dV/dS - r*V = 0
+V(S, T) = max(S - K, 0)
+```
 
-mapping parameter space to function space.
+The intended operator maps `(sigma, r, K, T)` to a grid of prices. Utility functions
+accept remaining maturity, while dataset templates represent calendar time.
+Keeping these conventions consistent is essential to a valid experiment.
 
-## References
+## Further reading
 
-- Li, Z. et al. "Fourier Neural Operator for Parametric PDEs" (ICLR 2021)
-- Lu, L. et al. "Learning Nonlinear Operators via DeepONet" (Nature Mach. Intell. 2021)
+[Data format](docs/DATA.md) · [Training](docs/TRAINING.md) ·
+[Evaluation](docs/EVALUATION.md) · [Known limitations](docs/LIMITATIONS.md) ·
+[Contributing](CONTRIBUTING.md) · [Changes](CHANGELOG.md)
